@@ -1,7 +1,12 @@
-CC = g++
-CFLAGS=-g -Wall -Wextra -Werror -lcurl
-MODULES=main.o
+# CC = g++
+# CFLAGS=-g -Wall -Wextra -Werror -lcurl
+# MODULES=main.o
+# all: main
+
+# main: $(MODULES) 
+# 	$(CC) $(FLAGS) $@ $^
+
 all: main
 
-main: $(MODULES)
-	$(CC) $(FLAGS) -o $@ $^
+main: main.cpp
+	g++ -g main.cpp -o main -lcurl

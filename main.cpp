@@ -14,6 +14,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <string.h>
+#include <libxml/tree.h>
 
 #include <curl/curl.h>
 
@@ -82,12 +83,6 @@ class Args{
         }
 };
 
-// void cleanUP(SSL_CTX *ctx, BIO* bio){
-//     SSL_CTX_free(ctx);
-//     BIO_free_all(bio);
-//     BIO_reset(bio);
-// }
-
 static size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
 {
   size_t written = fwrite(ptr, size, nmemb, (FILE *)stream);
@@ -106,44 +101,18 @@ int main(int argc, char** argv)
     curl_global_init(CURL_GLOBAL_ALL);
     curl_handle = curl_easy_init();
     curl_easy_setopt(curl_handle, CURLOPT_URL, params.path.c_str());
-    curl_easy_setopt(curl_handle, CURLOPT_VERBOSE, 1L);
+    // curl_easy_setopt(curl_handle, CURLOPT_VERBOSE, 1L);
     curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 1L);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_data);
     pagefile = fopen(pagefilename, "wb");
     if(pagefile){
         curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, pagefile);
         curl_easy_perform(curl_handle);
+        long http_code = 0;
+        curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
         fclose(pagefile);
     }
     curl_easy_cleanup(curl_handle);
     curl_global_cleanup();
     return 0;
 }
-
-// SSL_CTX *ctx = SSL_CTX_new(SSLv23_client_method());
-//     SSL *ssl;
-//     if(! params.getCertificates(ctx)){
-//         cout << "something went wrong" << endl;
-//         SSL_CTX_free(ctx);
-//         return 1;
-//     }
-//     BIO *bio = BIO_new_ssl_connect(ctx);
-//     BIO_get_ssl(bio, &ssl);
-//     SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
-//     BIO_set_conn_hostname(bio, params.path.c_str());
-//     int tmp = BIO_do_connect(bio);
-//     if(tmp <= 0){
-//         cout << tmp << endl;
-//         cout << "did not connect BIO" << endl;
-//         cleanUP(ctx, bio);
-//         return 1;
-//     }
-//     if(SSL_get_verify_result(ssl) != X509_V_OK){
-//         cout << "unverified SSL" << endl;
-//         cleanUP(ctx, bio);
-//         return 1;
-//     }
-//     char* buffer[100];
-//     BIO_read(bio, buffer, 50);
-//     cleanUP(ctx, bio);
-//     return 0;
