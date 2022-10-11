@@ -1,6 +1,6 @@
-CC = gcc
-CFLAGS=-g -Wall -Wextra -Werror -lstdc++ -lssl -lcrypto
-MODULES=main.o HTTPClient.o CurlHandle.o
+CC = g++
+CFLAGS=-g -Wall -Wextra -Werror -lcurl
+MODULES=main.o
 all: main
 
 main: $(MODULES)
