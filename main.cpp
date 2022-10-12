@@ -14,9 +14,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <string.h>
-#include <libxml/tree.h>
+// #include <libxml/tree.h>
 
-#include <curl/curl.h>
+#include "curl/curl.h"
 
 /* OpenSSL headers */
 
@@ -89,18 +89,18 @@ static size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
   return written;
 }
 
-static void print_element_names(xmlNode * a_node)
-{
-    xmlNode *cur_node = NULL;
+// static void print_element_names(xmlNode * a_node)
+// {
+//     xmlNode *cur_node = NULL;
 
-    for (cur_node = a_node; cur_node; cur_node = cur_node->next) {
-        if (cur_node->type == XML_ELEMENT_NODE) {
-            printf("node type: Element, name: %s\n", cur_node->name);
-        }
+//     for (cur_node = a_node; cur_node; cur_node = cur_node->next) {
+//         if (cur_node->type == XML_ELEMENT_NODE) {
+//             printf("node type: Element, name: %s\n", cur_node->name);
+//         }
 
-        print_element_names(cur_node->children);
-    }
-}
+//         print_element_names(cur_node->children);
+//     }
+// }
 
 int main(int argc, char** argv)
 {
@@ -130,16 +130,16 @@ int main(int argc, char** argv)
     curl_global_cleanup();
 
 
-    LIBXML_TEST_VERSION
-    xmlDoc *doc = xmlReadFile(pagefilename, NULL, 0);
-    if(doc == NULL){
-        cout << "error: could not parse" << endl;
-        return 1;
-    }
-    xmlNode *root = xmlDocGetRootElement(doc);
-    print_element_names(root);
-    xmlFreeDoc(doc);
-    xmlCleanupParser();
+    // LIBXML_TEST_VERSION
+    // xmlDoc *doc = xmlReadFile(pagefilename, NULL, 0);
+    // if(doc == NULL){
+    //     cout << "error: could not parse" << endl;
+    //     return 1;
+    // }
+    // xmlNode *root = xmlDocGetRootElement(doc);
+    // print_element_names(root);
+    // xmlFreeDoc(doc);
+    // xmlCleanupParser();
 
     return 0;
 }

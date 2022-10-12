@@ -9,4 +9,4 @@
 all: main
 
 main: main.cpp
-	g++ -Wall -o main main.cpp -lxml -lcurl
+	g++ -Wall -o main main.cpp -lcurl
