@@ -16,8 +16,6 @@
 #include <string.h>
 // #include <libxml/tree.h>
 
-#include "curl/curl.h"
-
 /* OpenSSL headers */
 
 # include  <openssl/bio.h>
@@ -26,8 +24,29 @@
 
 using namespace std;
 
+class Path{
+    public:
+        bool is_https = false;
+        char* original;
+        char* scheme;
+        char* host;
+        char* port;
+        char* path;
+
+        void parse(char* url){
+            original = url;
+            if(!OSSL_parse_url(url, &scheme, NULL, &host, &port, NULL, &path, NULL, NULL)){
+                cout << "failed to parse URL" << endl;
+                exit(1);
+            }
+            if((string)scheme == "https")
+                is_https = true;
+        }
+};
+
 class Args{
     public:
+        Path Url;
         string path;
         string cFile;
         string cDir;
@@ -40,13 +59,13 @@ class Args{
             for(int i = 1; i < argc; i++){
                 if(((string)argv[i]).length() > 2){
                     if(path.empty()){
-                        path = argv[i];
+                        Url.parse(argv[i]);
                     }else{
                         break;
                     }
                 }else{
                     if(argv[i][0] == '-' && argv[i][1] == 'f'){
-                        path = argv[++i];
+                        path = (string)argv[++i];
                         f = true;
                     }else if(argv[i][0] == '-' && argv[i][1] == 'c'){
                         cFile = argv[++i];
@@ -83,63 +102,38 @@ class Args{
         }
 };
 
-static size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
-{
-  size_t written = fwrite(ptr, size, nmemb, (FILE *)stream);
-  return written;
-}
-
-// static void print_element_names(xmlNode * a_node)
+// static size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
 // {
-//     xmlNode *cur_node = NULL;
-
-//     for (cur_node = a_node; cur_node; cur_node = cur_node->next) {
-//         if (cur_node->type == XML_ELEMENT_NODE) {
-//             printf("node type: Element, name: %s\n", cur_node->name);
-//         }
-
-//         print_element_names(cur_node->children);
-//     }
+//   size_t written = fwrite(ptr, size, nmemb, (FILE *)stream);
+//   return written;
 // }
 
 int main(int argc, char** argv)
 {
     Args params;
     params.init(argc, argv);
-    cout << params.path << endl;
 
-    CURL *curl_handle;
-    static const char *pagefilename = "page.out";
-    FILE *pagefile;
+    BIO *bio;
+    SSL_CTX *ctx;
+    SSL *ssl;
 
-    curl_global_init(CURL_GLOBAL_ALL);
-    curl_handle = curl_easy_init();
-    curl_easy_setopt(curl_handle, CURLOPT_URL, params.path.c_str());
-    // curl_easy_setopt(curl_handle, CURLOPT_VERBOSE, 1L);
-    curl_easy_setopt(curl_handle, CURLOPT_NOPROGRESS, 1L);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_data);
-    pagefile = fopen(pagefilename, "wb");
-    if(pagefile){
-        curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, pagefile);
-        curl_easy_perform(curl_handle);
-        long http_code = 0;
-        curl_easy_getinfo(curl_handle, CURLINFO_RESPONSE_CODE, &http_code);
-        fclose(pagefile);
+    SSL_load_error_strings();
+    SSL_library_init();
+    if(!params.Url.is_https){
+        bio = BIO_new_connect(((string)params.Url.host + ":" + (string)params.Url.port).c_str());
+        if(bio == NULL){
+            cout << "failed BIO" << endl;
+            return 1;
+        }
+        while (BIO_do_connect(bio) <= 0) {
+            if (!BIO_should_retry(bio)) {
+                cout << "bio should retry failed" << endl;
+                return 1;
+            } else {
+                continue;
+            }
+        }
     }
-    curl_easy_cleanup(curl_handle);
-    curl_global_cleanup();
-
-
-    // LIBXML_TEST_VERSION
-    // xmlDoc *doc = xmlReadFile(pagefilename, NULL, 0);
-    // if(doc == NULL){
-    //     cout << "error: could not parse" << endl;
-    //     return 1;
-    // }
-    // xmlNode *root = xmlDocGetRootElement(doc);
-    // print_element_names(root);
-    // xmlFreeDoc(doc);
-    // xmlCleanupParser();
 
     return 0;
 }
