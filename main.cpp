@@ -14,6 +14,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <string.h>
+#include <regex>
 // #include <libxml/tree.h>
 
 /* OpenSSL headers */
@@ -41,6 +42,13 @@ class Path{
             }
             if((string)scheme == "https")
                 is_https = true;
+            if(atoi(port) == 0){
+                if(is_https){
+                    port = (char*)"443\0";
+                }else{
+                    port = (char*)"80\0";
+                }
+            }
         }
 };
 
@@ -85,19 +93,10 @@ class Args{
         int getCertificates(SSL_CTX* ctx){
             if(cFile.empty() && cDir.empty()){
                 return SSL_CTX_set_default_verify_paths(ctx);
-            }else if (cDir.empty())
-            {
-                if(! SSL_CTX_load_verify_locations(ctx, cFile.c_str(), NULL)){
-                    cout << "unable to load certificate file" << endl;
-                    exit(1);
-                }
-                return SSL_CTX_load_verify_file(ctx, cFile.c_str());
+            }else if (cDir.empty()){
+                return SSL_CTX_load_verify_locations(ctx, cFile.c_str(), NULL);
             }else{
-                if(! SSL_CTX_load_verify_locations(ctx, NULL, cDir.c_str())){
-                    cout << "unable to load certificate folder" << endl;
-                    exit(1);
-                }
-                return SSL_CTX_load_verify_dir(ctx, cDir.c_str());
+                return SSL_CTX_load_verify_locations(ctx, NULL, cDir.c_str());
             }
         }
 };
@@ -120,7 +119,7 @@ int main(int argc, char** argv)
     SSL_load_error_strings();
     SSL_library_init();
     if(!params.Url.is_https){
-        bio = BIO_new_connect(((string)params.Url.host + ":" + (string)params.Url.port).c_str());
+        bio = BIO_new_connect(strcat(strcat(params.Url.host, ":"), params.Url.port));
         if(bio == NULL){
             cout << "failed BIO" << endl;
             return 1;
@@ -133,7 +132,73 @@ int main(int argc, char** argv)
                 continue;
             }
         }
+    }else{
+        ctx = SSL_CTX_new(SSLv23_client_method());
+        if(!params.getCertificates(ctx)){
+            cout << "certificates failed" << endl;
+            return 1;
+        }
+        bio = BIO_new_ssl_connect(ctx);
+        BIO_get_ssl(bio, &ssl);
+        SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
+        BIO_set_conn_hostname(bio, strcat(strcat(params.Url.host, ":"), params.Url.port));
+        while(BIO_do_connect(bio) <= 0){
+            if (!BIO_should_retry(bio)) {
+                cout << "failed bio retry" << endl;
+                return 1;
+            } else {
+                continue;
+            }
+        }
+        if(SSL_get_verify_result(ssl) != X509_V_OK){
+            cout << "ssl verify result failed" << endl;
+            return 1;
+        }
     }
 
+    string request = "GET " + ((string)params.Url.path) + " HTTP/1.0\r\nHost: " + ((string)params.Url.host) + "\r\nUser-Agent: Feedreader-xvitul03\r\nAccept: application/xml\r\nAccept-Charset: UTF-8,*\r\nCache-Control: private, no-store, max-age=0\r\nConnection: close\r\n\r\n";
+    while(BIO_write(bio, request.c_str(), (request.length() + 1) * sizeof(char)) <= 0){
+        if (!BIO_should_retry(bio)) {
+            cout << "failed to send request" << endl;
+            return 1;
+        } else {
+            continue;
+        }
+    }
+
+    int size = 8192;
+    char* response = (char*)malloc(sizeof(char) * (size + 1));
+    string result = "";
+    int round = 0;
+    string ret_code;
+    while(true){
+        int len = BIO_read(bio, (void*)response, size);
+        if (len < 0) {
+            if (!BIO_should_retry(bio)) {
+                cout << "failed bio reatry in read" << endl;
+                return 1;
+            } else {
+                continue;
+            }
+        } else if (len == 0) {
+            break;
+        } else {
+            if(round++ == 0){
+                smatch m;
+                result = (string)response;
+                regex_search(result, m, regex("[H,h][T,t]{2}[P,p][S, s]*/1.\\d \\d{3}"));
+                ret_code = m.str();
+                regex_search(ret_code, m, regex("\\d{3}"));
+                ret_code = m.str();
+                regex_search(result, m, regex("\r\n\r\n"));
+                result = (string)&response[m.position() + 4];
+            }else{
+                result += (string)response;
+            }
+            continue;
+        }
+    }
+    cout << result << endl;
+    cout << ret_code << endl;
     return 0;
 }
