@@ -15,7 +15,7 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <regex>
-// #include <libxml/tree.h>
+#include <libxml2/libxml/parser.h>
 
 /* OpenSSL headers */
 
@@ -198,7 +198,25 @@ int main(int argc, char** argv)
             continue;
         }
     }
+    if(atoi(ret_code.c_str()) != 200){
+        cout << "http response is not OK" << endl;
+        return 1;
+    }
     cout << result << endl;
     cout << ret_code << endl;
+
+    xmlDocPtr doc = xmlReadMemory(result.c_str(), result.length(), NULL, NULL, XML_PARSE_NOERROR | XML_PARSE_NOWARNING);
+    if(doc == NULL){
+        cout << "failed to parse XML" << endl;
+        return 1;
+    }
+
+    xmlNodePtr root = xmlDocGetRootElement(doc);
+    if(root == NULL){
+        cout << "failed to get root" << endl;
+        return 1;
+    }
+
+    cout << root->name << endl << root->children << endl;
     return 0;
 }
