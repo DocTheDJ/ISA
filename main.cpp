@@ -2,7 +2,8 @@
 #include <vector>
 #include <string.h>
 #include <regex>
-#include <libxml2/libxml/parser.h>
+#include <algorithm>
+// #include <libxml2/libxml/parser.h>
 
 /* OpenSSL headers */
 
@@ -14,26 +15,59 @@ using namespace std;
 class Path{
     public:
         bool is_https = false;
-        char* original;
-        char* scheme;
-        char* host;
-        char* port;
-        char* path;
+        string original;
+        string scheme;
+        string host;
+        string port;
+        string path;
+
+        void init(char* url){
+            original = url;
+            parse(url);
+        }
 
         void parse(char* url){
-            original = url;
-            if(!OSSL_parse_url(url, &scheme, NULL, &host, &port, NULL, &path, NULL, NULL)){
-                cout << "failed to parse URL" << endl;
-                exit(1);
-            }
-            if((string)scheme == "https")
-                is_https = true;
-            if(atoi(port) == 0){
-                if(is_https){
-                    port = (char*)"443\0";
-                }else{
-                    port = (char*)"80\0";
+            smatch found;
+            string tmp = (string)url;
+            string rest = "";
+            if(regex_search(tmp, found, regex("(.*?)://(.*)"))){
+                scheme = found.str(1);
+                for(long unsigned int i = 0; i < scheme.length(); i++){
+                    scheme[i] = tolower(scheme[i]);
                 }
+                if(scheme == "https")
+                    is_https = true;
+                rest = found.str(2);
+                if(regex_search(rest, found, regex("(.*?):(.*)"))){
+                    host = found.str(1);
+                    rest = found.str(2);
+                    if(regex_search(rest, found, regex("(.*?)(/.*)"))){
+                        if(found.str(1).empty()){
+                            if(is_https)
+                                port = (char*)"443\0";
+                            else
+                                port = (char*)"80\0";
+                        }else{
+                            port = found.str(1);
+                        }
+                        path = found.str(2);
+                    }else{
+                        cout << "url parse failed on port" << endl;
+                    }
+                }else{
+                    if(is_https)
+                        port = (char*)"443\0";
+                    else
+                        port = (char*)"80\0";
+                    if(regex_search(rest, found, regex("(.*?)(/.*)"))){
+                        host = found.str(1);
+                        path = found.str(2);
+                    }else{
+                        cout << "url parse failed on host" << endl;
+                    }
+                }
+            }else{
+                cout << "url parse failed on scheme" << endl;
             }
         }
 };
@@ -53,7 +87,7 @@ class Args{
             for(int i = 1; i < argc; i++){
                 if(((string)argv[i]).length() > 2){
                     if(path.empty()){
-                        Url.parse(argv[i]);
+                        Url.init(argv[i]);
                     }else{
                         break;
                     }
@@ -104,8 +138,9 @@ int main(int argc, char** argv)
 
     SSL_load_error_strings();
     SSL_library_init();
+    string host_port = params.Url.host + ":" + params.Url.port;
     if(!params.Url.is_https){
-        bio = BIO_new_connect(strcat(strcat(params.Url.host, ":"), params.Url.port));
+        bio = BIO_new_connect(host_port.c_str());
         if(bio == NULL){
             cout << "failed BIO" << endl;
             return 1;
@@ -127,7 +162,7 @@ int main(int argc, char** argv)
         bio = BIO_new_ssl_connect(ctx);
         BIO_get_ssl(bio, &ssl);
         SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
-        BIO_set_conn_hostname(bio, strcat(strcat(params.Url.host, ":"), params.Url.port));
+        BIO_set_conn_hostname(bio, host_port.c_str());
         while(BIO_do_connect(bio) <= 0){
             if (!BIO_should_retry(bio)) {
                 cout << "failed bio retry" << endl;
@@ -191,18 +226,18 @@ int main(int argc, char** argv)
     cout << result << endl;
     cout << ret_code << endl;
 
-    xmlDocPtr doc = xmlReadMemory(result.c_str(), result.length(), NULL, NULL, XML_PARSE_NOERROR | XML_PARSE_NOWARNING);
-    if(doc == NULL){
-        cout << "failed to parse XML" << endl;
-        return 1;
-    }
+    // xmlDocPtr doc = xmlReadMemory(result.c_str(), result.length(), NULL, NULL, XML_PARSE_NOERROR | XML_PARSE_NOWARNING);
+    // if(doc == NULL){
+    //     cout << "failed to parse XML" << endl;
+    //     return 1;
+    // }
 
-    xmlNodePtr root = xmlDocGetRootElement(doc);
-    if(root == NULL){
-        cout << "failed to get root" << endl;
-        return 1;
-    }
+    // xmlNodePtr root = xmlDocGetRootElement(doc);
+    // if(root == NULL){
+    //     cout << "failed to get root" << endl;
+    //     return 1;
+    // }
 
-    cout << root->name << endl << root->children << endl;
+    // cout << root->name << endl << root->children << endl;
     return 0;
 }
