@@ -1,18 +1,5 @@
 #include <iostream>
 #include <vector>
-#include <string>
-#include <string_view>
-
-// #include "HTTPClient.h"
-
-#include <stdio.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <string.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <string.h>
 #include <regex>
 #include <libxml2/libxml/parser.h>
@@ -21,7 +8,6 @@
 
 # include  <openssl/bio.h>
 # include  <openssl/ssl.h>
-# include  <openssl/err.h>
 
 using namespace std;
 
