@@ -9,5 +9,4 @@
 all: main
 
 main: main.cpp
-	g++ -Wall -o main main.cpp -lcrypto -lssl 
-	# `xml2-config --cflags`
+	g++ -Wall -o main main.cpp -lcrypto -lssl #`xml2-config --cflags` -lxml2

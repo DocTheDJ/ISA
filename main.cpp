@@ -3,6 +3,8 @@
 #include <string.h>
 #include <regex>
 #include <algorithm>
+#include <fstream>
+#include <stdio.h>
 // #include <libxml2/libxml/parser.h>
 
 /* OpenSSL headers */
@@ -187,11 +189,13 @@ int main(int argc, char** argv)
         }
     }
 
-    int size = 8192;
+    int size = 16384;
     char* response = (char*)malloc(sizeof(char) * (size + 1));
     string result = "";
     int round = 0;
     string ret_code;
+    string fileName = "a.txt";
+    ofstream file(fileName, ios::out | ios::trunc);
     while(true){
         int len = BIO_read(bio, (void*)response, size);
         if (len < 0) {
@@ -202,8 +206,18 @@ int main(int argc, char** argv)
                 continue;
             }
         } else if (len == 0) {
+            cout << "len is 0" << endl;
+            smatch found;
+            // cout << result << endl;
+            regex_search(result, found, regex("(.*)</rss>"));
+            cout << found.position() << endl;
+            result = result.substr(0, found.position() + ((string)"</rss>").length());
+            file << result;
             break;
         } else {
+            if(result != ""){
+                file << result;
+            }
             if(round++ == 0){
                 smatch m;
                 result = (string)response;
@@ -214,7 +228,7 @@ int main(int argc, char** argv)
                 regex_search(result, m, regex("\r\n\r\n"));
                 result = (string)&response[m.position() + 4];
             }else{
-                result += (string)response;
+                result = (string)response;
             }
             continue;
         }
@@ -223,8 +237,10 @@ int main(int argc, char** argv)
         cout << "http response is not OK" << endl;
         return 1;
     }
-    cout << result << endl;
+    BIO_free_all(bio);
     cout << ret_code << endl;
+    // if(remove(fileName.c_str()) != 0)
+    //     cout << "error deleting temp file" << endl;
 
     // xmlDocPtr doc = xmlReadMemory(result.c_str(), result.length(), NULL, NULL, XML_PARSE_NOERROR | XML_PARSE_NOWARNING);
     // if(doc == NULL){
