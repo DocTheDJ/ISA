@@ -5,7 +5,10 @@
 #include <algorithm>
 #include <fstream>
 #include <stdio.h>
-// #include <libxml2/libxml/parser.h>
+#include <iterator>
+#include <list>
+#include <libxml2/libxml/parser.h>
+#include <libxml2/libxml/tree.h>
 
 /* OpenSSL headers */
 
@@ -17,15 +20,17 @@ using namespace std;
 class Path{
     public:
         bool is_https = false;
+        bool is_rss = false;
         string original;
         string scheme;
         string host;
         string port;
         string path;
 
-        void init(char* url){
+        Path init(char* url){
             original = url;
             parse(url);
+            return *this;
         }
 
         void parse(char* url){
@@ -76,10 +81,10 @@ class Path{
 
 class Args{
     public:
-        Path Url;
-        string path;
-        string cFile;
-        string cDir;
+        list<Path> Urls;
+        list<string> paths;
+        list<string> cFiles;
+        list<string> cDirs;
         bool f = false;
         bool T = false;
         bool a = false;
@@ -87,39 +92,196 @@ class Args{
 
         void init(int argc, char** argv){
             for(int i = 1; i < argc; i++){
-                if(((string)argv[i]).length() > 2){
-                    if(path.empty()){
-                        Url.init(argv[i]);
-                    }else{
-                        break;
+                int ret = isOneOfParams(argv[i]);
+                if(!ret){
+                    Urls.push_back(Path().init(argv[i]));
+                    continue;
+                }
+                if(ret == 1 || ret == 2 || ret == 6){
+                    shouldNotBeParam(argv[++i], ret);
+                }
+            }
+        }
+
+        void getCertificates(SSL_CTX* ctx){
+            if(cFiles.empty() && cDirs.empty()){
+                if(!SSL_CTX_set_default_verify_paths(ctx)){
+                    cout << "certificates failed" << endl;
+                    exit(1);
+                }
+            }else {
+                list<string>::iterator files;
+                for(files = cFiles.begin(); files != cFiles.end(); ++files){
+                    if(!SSL_CTX_load_verify_locations(ctx, (*files).c_str(), NULL)){
+                        cout << "certificates failed" << endl;
+                        exit(1);
                     }
-                }else{
-                    if(argv[i][0] == '-' && argv[i][1] == 'f'){
-                        path = (string)argv[++i];
-                        f = true;
-                    }else if(argv[i][0] == '-' && argv[i][1] == 'c'){
-                        cFile = argv[++i];
-                    }else if(argv[i][0] == '-' && argv[i][1] == 'C'){
-                        cDir = argv[++i];
-                    }else if(argv[i][0] == '-' && argv[i][1] == 'T'){
-                        T = true;
-                    }else if(argv[i][0] == '-' && argv[i][1] == 'u'){
-                        u = true;
-                    }else if(argv[i][0] == '-' && argv[i][1] == 'a'){
-                        a = true;
+                }
+                for(files = cDirs.begin(); files != cDirs.end(); ++files){
+                    if(!SSL_CTX_load_verify_locations(ctx, NULL, (*files).c_str())){
+                        cout << "certificates failed" << endl;
+                        exit(1);
                     }
                 }
             }
         }
 
-        int getCertificates(SSL_CTX* ctx){
-            if(cFile.empty() && cDir.empty()){
-                return SSL_CTX_set_default_verify_paths(ctx);
-            }else if (cDir.empty()){
-                return SSL_CTX_load_verify_locations(ctx, cFile.c_str(), NULL);
-            }else{
-                return SSL_CTX_load_verify_locations(ctx, NULL, cDir.c_str());
+    private:
+        int isOneOfParams(string param){
+            if(param == "-c")
+                return 1;
+            if(param == "-C")
+                return 2;
+            if(param == "-T"){
+                T = true;
+                return 3;
             }
+            if(param == "-u"){
+                u = true;
+                return 4;
+            }
+            if(param == "-a"){
+                a = true;
+                return 5;
+            }
+            if(param == "-f"){
+                f = true;
+                return 6;
+            }
+            return 0;
+        }
+
+        void shouldNotBeParam(string param, int target){
+            if(isOneOfParams(param)){
+                cout << "invalid argument sequence" << endl;
+                exit(1);
+            }else{
+                switch(target){
+                    case 1:
+                        cFiles.push_back(param);
+                        break;
+                    case 2:
+                        cDirs.push_back(param);
+                        break;
+                    case 6:
+                        paths.push_back(param);
+                        break;
+                    default:
+                        cout << "error in arguments" << endl;
+                        exit(1);
+                }
+            }
+        }
+};
+
+class Communication{
+    private:
+        BIO *bio;
+        SSL_CTX *ctx;
+        SSL *ssl;
+    public:
+        int run(Path Url, Args params){
+            SSL_load_error_strings();
+            SSL_library_init();
+            string host_port = Url.host + ":" + Url.port;
+            if(!Url.is_https){
+                bio = BIO_new_connect(host_port.c_str());
+                if(bio == NULL){
+                    cout << "failed BIO" << endl;
+                    return 1;
+                }
+                while (BIO_do_connect(bio) <= 0) {
+                    if (!BIO_should_retry(bio)) {
+                        cout << "bio should retry failed" << endl;
+                        return 1;
+                    } else {
+                        continue;
+                    }
+                }
+            }else{
+                ctx = SSL_CTX_new(SSLv23_client_method());
+                params.getCertificates(ctx);
+                bio = BIO_new_ssl_connect(ctx);
+                BIO_get_ssl(bio, &ssl);
+                SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
+                BIO_set_conn_hostname(bio, host_port.c_str());
+                while(BIO_do_connect(bio) <= 0){
+                    if (!BIO_should_retry(bio)) {
+                        cout << "failed bio retry" << endl;
+                        return 1;
+                    } else {
+                        continue;
+                    }
+                }
+                if(SSL_get_verify_result(ssl) != X509_V_OK){
+                    cout << "ssl verify result failed" << endl;
+                    return 1;
+                }
+            }
+
+            string request = "GET " + ((string)Url.path) + " HTTP/1.0\r\nHost: " + ((string)Url.host) + "\r\nUser-Agent: Feedreader-xvitul03\r\nAccept: application/xml\r\nAccept-Charset: UTF-8,*\r\nCache-Control: private, no-store, max-age=0\r\nConnection: close\r\n\r\n";
+            while(BIO_write(bio, request.c_str(), (request.length() + 1) * sizeof(char)) <= 0){
+                if (!BIO_should_retry(bio)) {
+                    cout << "failed to send request" << endl;
+                    return 1;
+                } else {
+                    continue;
+                }
+            }
+
+            int size = 16384;
+            char* response = (char*)malloc(sizeof(char) * (size + 1));
+            string result = "";
+            int round = 0;
+            string ret_code;
+            string fileName = "a.txt";
+            ofstream file(fileName, ios::out | ios::trunc);
+            while(true){
+                int len = BIO_read(bio, (void*)response, size);
+                if (len < 0) {
+                    if (!BIO_should_retry(bio)) {
+                        cout << "failed bio reatry in read" << endl;
+                        return 1;
+                    } else {
+                        continue;
+                    }
+                } else if (len == 0) {
+                    cout << "len is 0" << endl;
+                    smatch found;
+                    // cout << result << endl;
+                    if(regex_search(result, found, regex("(.*)</rss>")))
+                        Url.is_rss = true
+                    cout << found.position() << endl;
+                    result = result.substr(0, found.position() + ((string)"</rss>").length());
+                    file << result;
+                    break;
+                } else {
+                    if(result != ""){
+                        file << result;
+                    }
+                    if(round++ == 0){
+                        smatch m;
+                        result = (string)response;
+                        regex_search(result, m, regex("[H,h][T,t]{2}[P,p][S, s]*/1.\\d \\d{3}"));
+                        ret_code = m.str();
+                        regex_search(ret_code, m, regex("\\d{3}"));
+                        ret_code = m.str();
+                        regex_search(result, m, regex("\r\n\r\n"));
+                        result = (string)&response[m.position() + 4];
+                    }else{
+                        result = (string)response;
+                    }
+                    continue;
+                }
+            }
+            if(atoi(ret_code.c_str()) != 200){
+                cout << "http response is not OK" << endl;
+                return 1;
+            }
+            BIO_free_all(bio);
+            cout << ret_code << endl;
+            free(response);
+            return 0;
         }
 };
 
@@ -129,130 +291,98 @@ class Args{
 //   return written;
 // }
 
+xmlNodePtr findNodeByName(xmlNodePtr root, const xmlChar* name){
+	xmlNodePtr node = root;
+	if(node == NULL)
+		return NULL;
+	while(node != NULL){
+		if(!xmlStrcmp(node->name, name)){
+			return node;
+		}else if(node->children != NULL){
+			xmlNodePtr res = findNodeByName(node->children, name);
+			if(res != NULL)
+				return res;
+		}
+		node = node->next;
+	}
+	return NULL;
+}
+
+void getDesiredData(xmlNodePtr node, Args params){
+	xmlNodePtr title = findNodeByName(node, (xmlChar*)(((string)"title").c_str()));
+	if(title != NULL)
+		cout << (char*)xmlNodeGetContent(title) << endl;
+	if(params.u){
+		title = findNodeByName(node, (xmlChar*)(((string)"link").c_str()));
+		if(title != NULL)
+			cout << (char*)xmlNodeGetContent(title) << endl;
+	}
+	if(params.T){
+		title = findNodeByName(node, (xmlChar*)(((string)"pubDate").c_str()));
+		if(title != NULL)
+			cout << (char*)xmlNodeGetContent(title) << endl;
+	}
+	if(params.a){
+		title = findNodeByName(node, (xmlChar*)(((string)"author").c_str()));
+		if(title != NULL)
+			cout << (char*)xmlNodeGetContent(title) << endl;
+	}
+	if(params.u || params.T || params.a)
+		cout << endl;
+	return;
+}
+
 int main(int argc, char** argv)
 {
     Args params;
     params.init(argc, argv);
 
-    BIO *bio;
-    SSL_CTX *ctx;
-    SSL *ssl;
+    list<Path>::iterator tmp;
+    for(tmp = params.Urls.begin(); tmp != params.Urls.end(); ++tmp){
+        if(Communication().run(*tmp, params)){
+            break; 
+        }
 
-    SSL_load_error_strings();
-    SSL_library_init();
-    string host_port = params.Url.host + ":" + params.Url.port;
-    if(!params.Url.is_https){
-        bio = BIO_new_connect(host_port.c_str());
-        if(bio == NULL){
-            cout << "failed BIO" << endl;
+        xmlDocPtr doc = xmlReadFile(fileName.c_str(), NULL, 0);
+        if(doc == NULL){
+            cout << "file parsing failed" << endl;
             return 1;
         }
-        while (BIO_do_connect(bio) <= 0) {
-            if (!BIO_should_retry(bio)) {
-                cout << "bio should retry failed" << endl;
-                return 1;
-            } else {
-                continue;
-            }
-        }
-    }else{
-        ctx = SSL_CTX_new(SSLv23_client_method());
-        if(!params.getCertificates(ctx)){
-            cout << "certificates failed" << endl;
-            return 1;
-        }
-        bio = BIO_new_ssl_connect(ctx);
-        BIO_get_ssl(bio, &ssl);
-        SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
-        BIO_set_conn_hostname(bio, host_port.c_str());
-        while(BIO_do_connect(bio) <= 0){
-            if (!BIO_should_retry(bio)) {
-                cout << "failed bio retry" << endl;
-                return 1;
-            } else {
-                continue;
-            }
-        }
-        if(SSL_get_verify_result(ssl) != X509_V_OK){
-            cout << "ssl verify result failed" << endl;
-            return 1;
-        }
-    }
 
-    string request = "GET " + ((string)params.Url.path) + " HTTP/1.0\r\nHost: " + ((string)params.Url.host) + "\r\nUser-Agent: Feedreader-xvitul03\r\nAccept: application/xml\r\nAccept-Charset: UTF-8,*\r\nCache-Control: private, no-store, max-age=0\r\nConnection: close\r\n\r\n";
-    while(BIO_write(bio, request.c_str(), (request.length() + 1) * sizeof(char)) <= 0){
-        if (!BIO_should_retry(bio)) {
-            cout << "failed to send request" << endl;
+        xmlNodePtr root = xmlDocGetRootElement(doc);
+        if(root == NULL){
+            cout << "failed to get root" << endl;
             return 1;
-        } else {
-            continue;
         }
-    }
+        cout << root->name << endl;
 
-    int size = 16384;
-    char* response = (char*)malloc(sizeof(char) * (size + 1));
-    string result = "";
-    int round = 0;
-    string ret_code;
-    string fileName = "a.txt";
-    ofstream file(fileName, ios::out | ios::trunc);
-    while(true){
-        int len = BIO_read(bio, (void*)response, size);
-        if (len < 0) {
-            if (!BIO_should_retry(bio)) {
-                cout << "failed bio reatry in read" << endl;
-                return 1;
-            } else {
-                continue;
+        //xmlNodePtr title = findNodeByName(root, (xmlChar*)(((string)"title").c_str()));
+        //if(title != NULL){
+        //	cout << (char*)xmlNodeGetContent(title) << endl;
+        //}
+        if((*tmp).is_rss){
+            xmlNodePtr channel = findNodeByName(root, (xmlChar*)(((string)"channel").c_str()));
+            if(channel != NULL){
+                xmlNodePtr title = findNodeByName(channel, (xmlChar*)(((string)"title").c_str()));
+                if(title != NULL)
+                    cout << "*** " << (char*)xmlNodeGetContent(title) << " ***" << endl;
+                xmlNodePtr curr_child = channel->children;
+                while(curr_child != NULL){
+                    if(!xmlStrcmp(curr_child->name, (xmlChar*)(((string)"item").c_str()))){
+                        getDesiredData(curr_child, params);
+                    }
+                    curr_child = curr_child->next;
+                }
             }
-        } else if (len == 0) {
-            cout << "len is 0" << endl;
-            smatch found;
-            // cout << result << endl;
-            regex_search(result, found, regex("(.*)</rss>"));
-            cout << found.position() << endl;
-            result = result.substr(0, found.position() + ((string)"</rss>").length());
-            file << result;
-            break;
-        } else {
-            if(result != ""){
-                file << result;
-            }
-            if(round++ == 0){
-                smatch m;
-                result = (string)response;
-                regex_search(result, m, regex("[H,h][T,t]{2}[P,p][S, s]*/1.\\d \\d{3}"));
-                ret_code = m.str();
-                regex_search(ret_code, m, regex("\\d{3}"));
-                ret_code = m.str();
-                regex_search(result, m, regex("\r\n\r\n"));
-                result = (string)&response[m.position() + 4];
-            }else{
-                result = (string)response;
-            }
-            continue;
         }
+
+        xmlFreeDoc(doc);
+        xmlCleanupParser();
+        xmlMemoryDump();
     }
-    if(atoi(ret_code.c_str()) != 200){
-        cout << "http response is not OK" << endl;
-        return 1;
-    }
-    BIO_free_all(bio);
-    cout << ret_code << endl;
+    
     // if(remove(fileName.c_str()) != 0)
     //     cout << "error deleting temp file" << endl;
-
-    // xmlDocPtr doc = xmlReadMemory(result.c_str(), result.length(), NULL, NULL, XML_PARSE_NOERROR | XML_PARSE_NOWARNING);
-    // if(doc == NULL){
-    //     cout << "failed to parse XML" << endl;
-    //     return 1;
-    // }
-
-    // xmlNodePtr root = xmlDocGetRootElement(doc);
-    // if(root == NULL){
-    //     cout << "failed to get root" << endl;
-    //     return 1;
-    // }
 
     // cout << root->name << endl << root->children << endl;
     return 0;
