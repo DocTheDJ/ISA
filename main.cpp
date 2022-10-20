@@ -9,6 +9,7 @@
 #include <list>
 #include <libxml2/libxml/parser.h>
 #include <libxml2/libxml/tree.h>
+//#include <libxml2/libxml/xmlmemory.h>
 
 /* OpenSSL headers */
 
@@ -26,6 +27,7 @@ class Path{
         string host;
         string port;
         string path;
+        string result = "";
 
         Path init(char* url){
             original = url;
@@ -101,6 +103,12 @@ class Args{
                     shouldNotBeParam(argv[++i], ret);
                 }
             }
+		if(f){
+			list<string>::iterator files;
+			for(files = paths.begin(); files != paths.end(); ++files){
+				readUrlsFromFile(*files);
+			}
+		}
         }
 
         void getCertificates(SSL_CTX* ctx){
@@ -172,6 +180,24 @@ class Args{
                 }
             }
         }
+	
+	void readUrlsFromFile(string path){
+		std::ifstream ifs(path);
+		string tmp;
+		while(getline(ifs, tmp)){
+			ltrim(tmp);
+			if(!(tmp.empty())){
+				if(!strncmp(tmp.c_str(), "#", strlen("#")))
+					continue;
+				else
+					Urls.push_back(Path().init((char*)(tmp.c_str())));
+			}
+		}
+		ifs.close();
+	}
+	
+	static inline void ltrim(std::string &s) {s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {return !std::isspace(ch);}));
+}
 };
 
 class Communication{
@@ -180,11 +206,11 @@ class Communication{
         SSL_CTX *ctx;
         SSL *ssl;
     public:
-        int run(Path Url, Args params){
+        int run(Path* Url, Args params){
             SSL_load_error_strings();
             SSL_library_init();
-            string host_port = Url.host + ":" + Url.port;
-            if(!Url.is_https){
+            string host_port = Url->host + ":" + Url->port;
+            if(!Url->is_https){
                 bio = BIO_new_connect(host_port.c_str());
                 if(bio == NULL){
                     cout << "failed BIO" << endl;
@@ -219,7 +245,7 @@ class Communication{
                 }
             }
 
-            string request = "GET " + ((string)Url.path) + " HTTP/1.0\r\nHost: " + ((string)Url.host) + "\r\nUser-Agent: Feedreader-xvitul03\r\nAccept: application/xml\r\nAccept-Charset: UTF-8,*\r\nCache-Control: private, no-store, max-age=0\r\nConnection: close\r\n\r\n";
+            string request = "GET " + ((string)Url->path) + " HTTP/1.0\r\nHost: " + ((string)Url->host) + "\r\nUser-Agent: Feedreader-xvitul03\r\nAccept: application/xml\r\nAccept-Charset: UTF-8,*\r\nCache-Control: private, no-store, max-age=0\r\nConnection: close\r\n\r\n";
             while(BIO_write(bio, request.c_str(), (request.length() + 1) * sizeof(char)) <= 0){
                 if (!BIO_should_retry(bio)) {
                     cout << "failed to send request" << endl;
@@ -231,11 +257,9 @@ class Communication{
 
             int size = 16384;
             char* response = (char*)malloc(sizeof(char) * (size + 1));
-            string result = "";
             int round = 0;
             string ret_code;
-            string fileName = "a.txt";
-            ofstream file(fileName, ios::out | ios::trunc);
+            string tmp = "";
             while(true){
                 int len = BIO_read(bio, (void*)response, size);
                 if (len < 0) {
@@ -248,28 +272,29 @@ class Communication{
                 } else if (len == 0) {
                     cout << "len is 0" << endl;
                     smatch found;
-                    // cout << result << endl;
-                    if(regex_search(result, found, regex("(.*)</rss>")))
-                        Url.is_rss = true
-                    cout << found.position() << endl;
-                    result = result.substr(0, found.position() + ((string)"</rss>").length());
-                    file << result;
+                    if(regex_search(tmp, found, regex("(.*)</rss>"))){
+				        cout << found.position() << endl;
+	                   	tmp = tmp.substr(0, found.position() + ((string)"</rss>").length());
+                    }else{
+                        regex_search(tmp, found, regex("(.*)</feed>"));
+                        cout << "atom " << found.position() << endl;
+                        tmp = tmp.substr(0, found.position() + ((string)"</feed>").length());
+                    }
+                    Url->result += tmp;
                     break;
                 } else {
-                    if(result != ""){
-                        file << result;
-                    }
+                    Url->result += tmp;
                     if(round++ == 0){
                         smatch m;
-                        result = (string)response;
-                        regex_search(result, m, regex("[H,h][T,t]{2}[P,p][S, s]*/1.\\d \\d{3}"));
+                        tmp = (string)response;
+                        regex_search(tmp, m, regex("[H,h][T,t]{2}[P,p][S, s]*/1.\\d \\d{3}"));
                         ret_code = m.str();
                         regex_search(ret_code, m, regex("\\d{3}"));
                         ret_code = m.str();
-                        regex_search(result, m, regex("\r\n\r\n"));
-                        result = (string)&response[m.position() + 4];
+                        regex_search(tmp, m, regex("\r\n\r\n"));
+                        tmp = (string)&response[m.position() + 4];
                     }else{
-                        result = (string)response;
+                        tmp = (string)response;
                     }
                     continue;
                 }
@@ -284,12 +309,6 @@ class Communication{
             return 0;
         }
 };
-
-// static size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
-// {
-//   size_t written = fwrite(ptr, size, nmemb, (FILE *)stream);
-//   return written;
-// }
 
 xmlNodePtr findNodeByName(xmlNodePtr root, const xmlChar* name){
 	xmlNodePtr node = root;
@@ -308,28 +327,56 @@ xmlNodePtr findNodeByName(xmlNodePtr root, const xmlChar* name){
 	return NULL;
 }
 
-void getDesiredData(xmlNodePtr node, Args params){
+void getDesiredData(xmlNodePtr node, Args params, bool rss){
 	xmlNodePtr title = findNodeByName(node, (xmlChar*)(((string)"title").c_str()));
 	if(title != NULL)
 		cout << (char*)xmlNodeGetContent(title) << endl;
-	if(params.u){
-		title = findNodeByName(node, (xmlChar*)(((string)"link").c_str()));
-		if(title != NULL)
-			cout << (char*)xmlNodeGetContent(title) << endl;
+	if(rss){
+		if(params.u){
+			title = findNodeByName(node, (xmlChar*)(((string)"link").c_str()));
+			if(title != NULL)
+				cout << "URL: " << (char*)xmlNodeGetContent(title) << endl;
+		}
+		if(params.T){
+			title = findNodeByName(node, (xmlChar*)(((string)"pubDate").c_str()));
+			if(title != NULL)
+				cout << "Aktualizace: " << (char*)xmlNodeGetContent(title) << endl;
+		}
+		if(params.a){
+			title = findNodeByName(node, (xmlChar*)(((string)"author").c_str()));
+			if(title != NULL)
+				cout << "Autor: " << (char*)xmlNodeGetContent(title) << endl;
+		}
+		if(params.u || params.T || params.a)
+			cout << endl;
+		return;
+	}else{
+		if(params.u){
+			title = findNodeByName(node, (xmlChar*)(((string)"link").c_str()));
+			if(title != NULL)
+				cout << "URL: " << (char*)xmlGetProp(title, (xmlChar*)(((string)"href").c_str())) << endl;
+		}
+		if(params.T){
+			title = findNodeByName(node, (xmlChar*)(((string)"update").c_str()));
+			if(title != NULL)
+				cout << "Aktualizace" << (char*)xmlNodeGetContent(title) << endl;
+		}
+		if(params.a){
+			title = findNodeByName(node, (xmlChar*)(((string)"author").c_str()));
+			if(title != NULL){
+				cout << "Autor: ";
+				xmlNodePtr name = findNodeByName(title, (xmlChar*)(((string)"name").c_str()));
+				if(name != NULL)
+					cout << (char*)xmlNodeGetContent(name) << endl;
+				name = findNodeByName(title, (xmlChar*)(((string)"email").c_str()));
+				if(name != NULL)
+					cout << (char*)xmlNodeGetContent(name) << endl;
+			}
+		}
+		if(params.u || params.T || params.a)
+			cout << endl;
+		return;
 	}
-	if(params.T){
-		title = findNodeByName(node, (xmlChar*)(((string)"pubDate").c_str()));
-		if(title != NULL)
-			cout << (char*)xmlNodeGetContent(title) << endl;
-	}
-	if(params.a){
-		title = findNodeByName(node, (xmlChar*)(((string)"author").c_str()));
-		if(title != NULL)
-			cout << (char*)xmlNodeGetContent(title) << endl;
-	}
-	if(params.u || params.T || params.a)
-		cout << endl;
-	return;
 }
 
 int main(int argc, char** argv)
@@ -339,11 +386,13 @@ int main(int argc, char** argv)
 
     list<Path>::iterator tmp;
     for(tmp = params.Urls.begin(); tmp != params.Urls.end(); ++tmp){
-        if(Communication().run(*tmp, params)){
-            break; 
+        if(Communication().run(&(*tmp), params)){
+            break;
         }
 
-        xmlDocPtr doc = xmlReadFile(fileName.c_str(), NULL, 0);
+        cout << (*tmp).result << endl;
+
+        xmlDocPtr doc = xmlReadMemory((*tmp).result, (*tmp).result.length(), NULL, NULL, 0);
         if(doc == NULL){
             cout << "file parsing failed" << endl;
             return 1;
@@ -355,11 +404,10 @@ int main(int argc, char** argv)
             return 1;
         }
         cout << root->name << endl;
+        if(!xmlStrcmp(root->name, (xmlChar*)(((string)"rss").c_str())))
+            (*tmp).is_rss = true;
 
-        //xmlNodePtr title = findNodeByName(root, (xmlChar*)(((string)"title").c_str()));
-        //if(title != NULL){
-        //	cout << (char*)xmlNodeGetContent(title) << endl;
-        //}
+        cout << (*tmp).is_rss << endl;
         if((*tmp).is_rss){
             xmlNodePtr channel = findNodeByName(root, (xmlChar*)(((string)"channel").c_str()));
             if(channel != NULL){
@@ -369,7 +417,7 @@ int main(int argc, char** argv)
                 xmlNodePtr curr_child = channel->children;
                 while(curr_child != NULL){
                     if(!xmlStrcmp(curr_child->name, (xmlChar*)(((string)"item").c_str()))){
-                        getDesiredData(curr_child, params);
+                        getDesiredData(curr_child, params, ((*tmp).is_rss));
                     }
                     curr_child = curr_child->next;
                 }
@@ -379,11 +427,9 @@ int main(int argc, char** argv)
         xmlFreeDoc(doc);
         xmlCleanupParser();
         xmlMemoryDump();
+	    cout << "-----------------------------------------" << endl;
     }
     
-    // if(remove(fileName.c_str()) != 0)
-    //     cout << "error deleting temp file" << endl;
-
     // cout << root->name << endl << root->children << endl;
     return 0;
 }
