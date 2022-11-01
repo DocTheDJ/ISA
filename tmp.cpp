@@ -1,4 +1,5 @@
 #include <iostream>
+#include <vector>
 #include <string.h>
 #include <regex>
 #include <algorithm>
@@ -86,7 +87,6 @@ class Args{
         list<Path> Urls;
         list<string> paths;
         list<string> cFiles;
-        list<string> cDirs;
         bool f = false;
         bool T = false;
         bool a = false;
@@ -110,7 +110,13 @@ class Args{
                 }
             }
         }
+
     private:
+        void getFilesFromDir(string path){
+            for(const auto & entry : filesystem::directory_iterator(path)){
+                cFiles.push_back(entry.path());
+            }
+        }
         int isOneOfParams(string param){
             if(param == "-c")
                 return 1;
@@ -145,7 +151,6 @@ class Args{
                         cFiles.push_back(param);
                         break;
                     case 2:
-                        // getFilesFromDir(param);
                         cDirs.push_back(param);
                         break;
                     case 6:
@@ -187,7 +192,6 @@ class Communication{
             SSL_load_error_strings();
             SSL_library_init();
             string host_port = Url->host + ":" + Url->port;
-            // cout << host_port << endl;
             if(!Url->is_https){
                 bio = BIO_new_connect(host_port.c_str());
                 if(bio == NULL){
@@ -203,11 +207,11 @@ class Communication{
                     }
                 }
             }else{
-                ctx = SSL_CTX_new(SSLv23_method());
-                getCertificates(params);
+                ctx = SSL_CTX_new(SSLv23_client_method());
+                params.getCertificates(ctx);
                 bio = BIO_new_ssl_connect(ctx);
                 BIO_get_ssl(bio, &ssl);
-                SSL_set_tlsext_host_name(ssl, Url->host.c_str());
+		SSL_set_tlsext_host_name(ssl, Url->host.c_str());
                 SSL_set_mode(ssl, SSL_MODE_AUTO_RETRY);
                 BIO_set_conn_hostname(bio, host_port.c_str());
                 while(BIO_do_connect(bio) <= 0){
@@ -218,9 +222,7 @@ class Communication{
                         continue;
                     }
                 }
-                long int oo = SSL_get_verify_result(ssl);
-                cout << oo << endl;
-                if(oo != X509_V_OK){
+                if(SSL_get_verify_result(ssl) != X509_V_OK){
                     cout << "ssl verify result failed" << endl;
                     return 1;
                 }
@@ -243,9 +245,7 @@ class Communication{
             string tmp = "";
             while(true){
                 int len = BIO_read(bio, (void*)response, size);
-                cout << len << endl;
-                response[len] = 0;
-                cout << tmp << endl;
+		        response[len] = 0;
                 if (len < 0) {
                     if (!BIO_should_retry(bio)) {
                         cout << "failed bio reatry in read" << endl;
@@ -255,31 +255,30 @@ class Communication{
                     }
                 } else if (len == 0) {
                     cout << "len is 0" << endl;
-                    smatch found;
-                    if(regex_search(tmp, found, regex("(.*)</rss>"))){
-				        cout << found.position() << endl;
-	                   	tmp = tmp.substr(0, found.position() + ((string)"</rss>").length());
-                    }else{
-                        regex_search(tmp, found, regex("(.*)</feed>"));
-                        cout << "atom " << found.position() << endl;
-                        tmp = tmp.substr(0, found.position() + ((string)"</feed>").length());
-                    }
+			size_t found_at = tmp.find("</rss>");
+			if(found_at!= string::npos){
+				cout << found_at << endl;
+		                tmp = tmp.substr(0, found_at + ((string)"</rss>").length());
+	                }else{
+				found_at = tmp.find("</feed>");
+                	        cout << "atom " << found_at << endl;
+                        	tmp = tmp.substr(0, found_at + ((string)"</feed>").length());
+			}
                     Url->result += tmp;
                     break;
                 } else {
-                    Url->result += tmp;
+			Url->result += tmp;
                     if(round++ == 0){
-                        smatch m;
+			smatch m;
                         tmp = (string)response;
                         regex_search(tmp, m, regex("[H,h][T,t]{2}[P,p][S, s]*/1.\\d (\\d{3})"));
                         ret_code = m.str(1);
-                        // regex_search(ret_code, m, regex("\\d{3}"));
-                        // ret_code = m.str();
                         regex_search(tmp, m, regex("\r\n\r\n"));
                         tmp = (string)&response[m.position() + 4];
                     }else{
                         tmp = (string)response;
                     }
+                    continue;
                 }
             }
             if(atoi(ret_code.c_str()) != 200){
@@ -291,7 +290,6 @@ class Communication{
             free(response);
             return 0;
         }
-
     private:
         void getCertificates(Args params){
             if(params.cFiles.empty()){
@@ -302,13 +300,8 @@ class Communication{
             }else {
                 list<string>::iterator files;
                 for(files = params.cFiles.begin(); files != params.cFiles.end(); ++files){
+                    cout << (*files) << endl;
                     if(!SSL_CTX_load_verify_locations(ctx, (*files).c_str(), NULL)){
-                        cout << "certificates failed" << endl;
-                        exit(1);
-                    }
-                }
-                for(files = params.cDirs.begin(); files != params.cDirs.end(); ++files){
-                    if(!SSL_CTX_load_verify_locations(ctx, NULL, (*files).c_str())){
                         cout << "certificates failed" << endl;
                         exit(1);
                     }
@@ -317,127 +310,133 @@ class Communication{
         }
 };
 
-// xmlNodePtr findNodeByName(xmlNodePtr root, const xmlChar* name){
-// 	xmlNodePtr node = root;
-// 	if(node == NULL)
-// 		return NULL;
-// 	while(node != NULL){
-// 		if(!xmlStrcmp(node->name, name)){
-// 			return node;
-// 		}else if(node->children != NULL){
-// 			xmlNodePtr res = findNodeByName(node->children, name);
-// 			if(res != NULL)
-// 				return res;
-// 		}
-// 		node = node->next;
-// 	}
-// 	return NULL;
-// }
+xmlNodePtr findNodeByName(xmlNodePtr root, const xmlChar* name){
+	xmlNodePtr node = root;
+	if(node == NULL)
+		return NULL;
+	while(node != NULL){
+		if(!xmlStrcmp(node->name, name)){
+			return node;
+		}else if(node->children != NULL){
+			xmlNodePtr res = findNodeByName(node->children, name);
+			if(res != NULL)
+				return res;
+		}
+		node = node->next;
+	}
+	return NULL;
+}
 
-// void getDesiredData(xmlNodePtr node, Args params, bool rss){
-// 	xmlNodePtr title = findNodeByName(node, (xmlChar*)(((string)"title").c_str()));
-// 	if(title != NULL)
-// 		cout << (char*)xmlNodeGetContent(title) << endl;
-// 	if(rss){
-// 		if(params.u){
-// 			title = findNodeByName(node, (xmlChar*)(((string)"link").c_str()));
-// 			if(title != NULL)
-// 				cout << "URL: " << (char*)xmlNodeGetContent(title) << endl;
-// 		}
-// 		if(params.T){
-// 			title = findNodeByName(node, (xmlChar*)(((string)"pubDate").c_str()));
-// 			if(title != NULL)
-// 				cout << "Aktualizace: " << (char*)xmlNodeGetContent(title) << endl;
-// 		}
-// 		if(params.a){
-// 			title = findNodeByName(node, (xmlChar*)(((string)"author").c_str()));
-// 			if(title != NULL)
-// 				cout << "Autor: " << (char*)xmlNodeGetContent(title) << endl;
-// 		}
-// 		if(params.u || params.T || params.a)
-// 			cout << endl;
-// 		return;
-// 	}else{
-// 		if(params.u){
-// 			title = findNodeByName(node, (xmlChar*)(((string)"link").c_str()));
-// 			if(title != NULL)
-// 				cout << "URL: " << (char*)xmlGetProp(title, (xmlChar*)(((string)"href").c_str())) << endl;
-// 		}
-// 		if(params.T){
-// 			title = findNodeByName(node, (xmlChar*)(((string)"update").c_str()));
-// 			if(title != NULL)
-// 				cout << "Aktualizace" << (char*)xmlNodeGetContent(title) << endl;
-// 		}
-// 		if(params.a){
-// 			title = findNodeByName(node, (xmlChar*)(((string)"author").c_str()));
-// 			if(title != NULL){
-// 				cout << "Autor: ";
-// 				xmlNodePtr name = findNodeByName(title, (xmlChar*)(((string)"name").c_str()));
-// 				if(name != NULL)
-// 					cout << (char*)xmlNodeGetContent(name) << endl;
-// 				name = findNodeByName(title, (xmlChar*)(((string)"email").c_str()));
-// 				if(name != NULL)
-// 					cout << (char*)xmlNodeGetContent(name) << endl;
-// 			}
-// 		}
-// 		if(params.u || params.T || params.a)
-// 			cout << endl;
-// 		return;
-// 	}
-// }
+void getDesiredData(xmlNodePtr node, Args params, bool rss){
+	xmlNodePtr title = findNodeByName(node, (xmlChar*)(((string)"title").c_str()));
+	if(title != NULL)
+		cout << (char*)xmlNodeGetContent(title) << endl;
+	if(rss){
+		if(params.u){
+			title = findNodeByName(node, (xmlChar*)(((string)"link").c_str()));
+			if(title != NULL)
+				cout << "URL: " << (char*)xmlNodeGetContent(title) << endl;
+		}
+		if(params.T){
+			title = findNodeByName(node, (xmlChar*)(((string)"pubDate").c_str()));
+			if(title != NULL)
+				cout << "Aktualizace: " << (char*)xmlNodeGetContent(title) << endl;
+		}
+		if(params.a){
+			title = findNodeByName(node, (xmlChar*)(((string)"author").c_str()));
+			if(title != NULL)
+				cout << "Autor: " << (char*)xmlNodeGetContent(title) << endl;
+		}
+		if(params.u || params.T || params.a)
+			cout << endl;
+		return;
+	}else{
+		if(params.u){
+			title = findNodeByName(node, (xmlChar*)(((string)"link").c_str()));
+			if(title != NULL)
+				cout << "URL: " << (char*)xmlGetProp(title, (xmlChar*)(((string)"href").c_str())) << endl;
+		}
+		if(params.T){
+			title = findNodeByName(node, (xmlChar*)(((string)"update").c_str()));
+			if(title != NULL)
+				cout << "Aktualizace" << (char*)xmlNodeGetContent(title) << endl;
+		}
+		if(params.a){
+			title = findNodeByName(node, (xmlChar*)(((string)"author").c_str()));
+			if(title != NULL){
+				cout << "Autor: ";
+				xmlNodePtr name = findNodeByName(title, (xmlChar*)(((string)"name").c_str()));
+				if(name != NULL)
+					cout << (char*)xmlNodeGetContent(name) << endl;
+				name = findNodeByName(title, (xmlChar*)(((string)"email").c_str()));
+				if(name != NULL)
+					cout << (char*)xmlNodeGetContent(name) << endl;
+			}
+		}
+		if(params.u || params.T || params.a)
+			cout << endl;
+		return;
+	}
+}
 
 int main(int argc, char** argv)
 {
     Args params;
     params.init(argc, argv);
 
-    cout << params.Urls.size() << endl;
-
     list<Path>::iterator tmp;
     for(tmp = params.Urls.begin(); tmp != params.Urls.end(); ++tmp){
-        cout << "boo" << endl;
         if(Communication().run(&(*tmp), params)){
-            cout << "failed com" << endl;
             break;
         }
 
-        // cout << (*tmp).result << endl;
+        //cout << (*tmp).result << endl;
 
-        // xmlDocPtr doc = xmlReadMemory((*tmp).result, (*tmp).result.length(), NULL, NULL, 0);
-        // if(doc == NULL){
-        //     cout << "file parsing failed" << endl;
-        //     return 1;
-        // }
+        xmlDocPtr doc = xmlReadMemory((*tmp).result.c_str(), (*tmp).result.length(), NULL, NULL, 0);
+        if(doc == NULL){
+            cout <<  "parsing failed" << endl;
+            return 1;
+        }
 
-        // xmlNodePtr root = xmlDocGetRootElement(doc);
-        // if(root == NULL){
-        //     cout << "failed to get root" << endl;
-        //     return 1;
-        // }
-        // cout << root->name << endl;
-        // if(!xmlStrcmp(root->name, (xmlChar*)(((string)"rss").c_str())))
-        //     (*tmp).is_rss = true;
+        xmlNodePtr root = xmlDocGetRootElement(doc);
+        if(root == NULL){
+            cout << "failed to get root" << endl;
+            return 1;
+        }
+        cout << root->name << endl;
+        if(!xmlStrcmp(root->name, (xmlChar*)(((string)"rss").c_str())))
+            (*tmp).is_rss = true;
 
-        // cout << (*tmp).is_rss << endl;
-        // if((*tmp).is_rss){
-        //     xmlNodePtr channel = findNodeByName(root, (xmlChar*)(((string)"channel").c_str()));
-        //     if(channel != NULL){
-        //         xmlNodePtr title = findNodeByName(channel, (xmlChar*)(((string)"title").c_str()));
-        //         if(title != NULL)
-        //             cout << "*** " << (char*)xmlNodeGetContent(title) << " ***" << endl;
-        //         xmlNodePtr curr_child = channel->children;
-        //         while(curr_child != NULL){
-        //             if(!xmlStrcmp(curr_child->name, (xmlChar*)(((string)"item").c_str()))){
-        //                 getDesiredData(curr_child, params, ((*tmp).is_rss));
-        //             }
-        //             curr_child = curr_child->next;
-        //         }
-        //     }
-        // }
+        cout << (*tmp).is_rss << endl;
+        if((*tmp).is_rss){
+            xmlNodePtr channel = findNodeByName(root, (xmlChar*)(((string)"channel").c_str()));
+            if(channel != NULL){
+                xmlNodePtr title = findNodeByName(channel, (xmlChar*)(((string)"title").c_str()));
+                if(title != NULL)
+                    cout << "*** " << (char*)xmlNodeGetContent(title) << " ***" << endl;
+                xmlNodePtr curr_child = channel->children;
+                while(curr_child != NULL){
+                    if(!xmlStrcmp(curr_child->name, (xmlChar*)(((string)"item").c_str()))){
+                        getDesiredData(curr_child, params, ((*tmp).is_rss));
+                    }
+                    curr_child = curr_child->next;
+                }
+            }
+        }else{
+		xmlNodePtr title = findNodeByName(root, (xmlChar*)(((string)"title").c_str()));
+		if(title != NULL)
+			cout << "*** " << (char*)xmlNodeGetContent(title) << " ***" << endl;
+		xmlNodePtr curr_child = root->children;
+		while(curr_child != NULL){
+			if(!xmlStrcmp(curr_child->name, (xmlChar*)(((string)"entry").c_str())))
+				getDesiredData(curr_child, params, ((*tmp).is_rss));
+			curr_child = curr_child->next;
+		}
+	}
 
-        // xmlFreeDoc(doc);
-        // xmlCleanupParser();
-        // xmlMemoryDump();
+        xmlFreeDoc(doc);
+        xmlCleanupParser();
+        xmlMemoryDump();
 	    cout << "-----------------------------------------" << endl;
     }
     
