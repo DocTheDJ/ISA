@@ -1,0 +1,3 @@
+https://www.fit.vut.cz/fit/news-rss/
+#gsdjngs
+https://en.wikipedia.org/w/api.php?hidebots=1&days=7&limit=50&hidewikidata=1&action=feedrecentchanges&feedformat=atom
